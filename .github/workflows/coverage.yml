@@ -1,0 +1,83 @@
+name: coverage
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+env:
+  FOUNDRY_PROFILE: ci
+  RPC_URL: ${{ secrets.RPC_URL }}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  coverage:
+    strategy:
+      fail-fast: true
+
+    name: Foundry coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Show Forge version
+        run: |
+          forge --version
+
+      - name: Install lcov
+        run: sudo apt-get -y install lcov
+
+      - name: Set yarn cache directory path
+        id: yarn-cache-dir-path
+        run: echo "::set-output name=dir::$(yarn cache dir)"
+
+      - name: Restore yarn cache
+        uses: actions/cache@v4
+        id: yarn-cache
+        with:
+          path: |
+            ${{ steps.yarn-cache-dir-path.outputs.dir }}
+          key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}
+            ${{ runner.os }}-yarn-
+
+      - name: Install node.js dependencies
+        run: yarn --frozen-lockfile
+
+      - name: Run generate html report
+        run: |
+          make coverage-html
+        id: coverage-html
+
+      - name: Generate summary report
+        run: |
+          lcov --summary lcov.info > coverage-report/summary.md
+          sed -i '1d' coverage-report/summary.md
+          sed -i '/Message summary:/,$d' coverage-report/summary.md
+
+      - name: Upload coverage report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CoverageReport # Artifact name
+          path: coverage-report # Directory containing files to upload
+
+      - name: Add comment to PR
+        if: github.event_name == 'pull_request' && env.GH_TOKEN != ''
+        run: gh pr comment $PR_NUMBER --body-file coverage-report/summary.md
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          PR_NUMBER: ${{ github.event.number }}
+
+      - name: Publish coverage in build summary
+        run: cat coverage-report/summary.md >> $GITHUB_STEP_SUMMARY
+        shell: bash
